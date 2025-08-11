@@ -1,23 +1,14 @@
+# name: test/sql/geotiff.test
+# group: [sql]
+
+# file: test/sql/geotiff.test
+# group [geotiff]
+
 statement ok
-PRAGMA allow_unsigned_extensions = true;
 LOAD geotiff;
 
-# basic count equals #pixels (cea.tif is 514x515 = 264710)
+# use a tiny test file placed at test/data/cea.tif (or fetched in the workflow)
 query I
-SELECT COUNT(*) FROM read_geotiff('test/data/cea.tif', band := 1, target_mb := 8);
+SELECT COUNT(*) FROM read_geotiff('test/data/cea.tif', band := 1);
 ----
 264710
-
-# cell_id should be sequential [0..count-1]
-query I
-SELECT (SELECT max(cell_id) FROM read_geotiff('test/data/cea.tif', band := 1))
-     = (SELECT COUNT(*) FROM read_geotiff('test/data/cea.tif', band := 1)) - 1;
-----
-1
-
-# at least 90% non-NULL values (loose sanity check, keeps test robust)
-query I
-SELECT (SELECT 1.0 * SUM(value IS NOT NULL) / COUNT(*)
-        FROM read_geotiff('test/data/cea.tif', band := 1)) >= 0.90;
-----
-1

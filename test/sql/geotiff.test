@@ -1,7 +1,15 @@
+# name: test/sql/geotiff.test
+# group: [sql]
+
 # group [geotiff]
+
+-- install the extension produced in this build (no internet, no unsigned flag)
+statement ok
+INSTALL geotiff FROM local_build_release;
 
 statement ok
 LOAD geotiff;
+
 
 query I
 SELECT 1;

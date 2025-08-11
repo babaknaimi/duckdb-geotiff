@@ -22,6 +22,14 @@ find_package(GDAL CONFIG REQUIRED)
 target_link_libraries(${EXTENSION_NAME}          GDAL::GDAL)
 target_link_libraries(${LOADABLE_EXTENSION_NAME} GDAL::GDAL)
 
+# Optional: add RPATHs so the loadable extension looks next to itself for libs
+if(APPLE)
+  set_target_properties(${LOADABLE_EXTENSION_NAME} PROPERTIES
+    BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+elseif(UNIX)
+  set_target_properties(${LOADABLE_EXTENSION_NAME} PROPERTIES
+    BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
+endif()
 
 install(
   TARGETS ${EXTENSION_NAME}

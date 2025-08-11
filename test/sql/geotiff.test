@@ -1,0 +1,23 @@
+# name: test/sql/geotiff.test
+# description: test geotiff extension
+# group: [sql]
+
+# Before we load the extension, this will fail
+statement error
+SELECT geotiff('Sam');
+----
+Catalog Error: Scalar Function with name geotiff does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require geotiff
+
+# Confirm the extension works
+query I
+SELECT geotiff('Sam');
+----
+Geotiff Sam 🐥
+
+query I
+SELECT geotiff_openssl_version('Michael') ILIKE 'Geotiff Michael, my linked OpenSSL version is OpenSSL%';
+----
+true

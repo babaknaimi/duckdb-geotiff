@@ -1,23 +1,23 @@
-# name: test/sql/geotiff.test
-# description: test geotiff extension
-# group: [sql]
+statement ok
+PRAGMA allow_unsigned_extensions = true;
+LOAD geotiff;
 
-# Before we load the extension, this will fail
-statement error
-SELECT geotiff('Sam');
-----
-Catalog Error: Scalar Function with name geotiff does not exist!
-
-# Require statement will ensure this test is run with this extension loaded
-require geotiff
-
-# Confirm the extension works
+# basic count equals #pixels (cea.tif is 514x515 = 264710)
 query I
-SELECT geotiff('Sam');
+SELECT COUNT(*) FROM read_geotiff('test/data/cea.tif', band := 1, target_mb := 8);
 ----
-Geotiff Sam 🐥
+264710
 
+# cell_id should be sequential [0..count-1]
 query I
-SELECT geotiff_openssl_version('Michael') ILIKE 'Geotiff Michael, my linked OpenSSL version is OpenSSL%';
+SELECT (SELECT max(cell_id) FROM read_geotiff('test/data/cea.tif', band := 1))
+     = (SELECT COUNT(*) FROM read_geotiff('test/data/cea.tif', band := 1)) - 1;
 ----
-true
+1
+
+# at least 90% non-NULL values (loose sanity check, keeps test robust)
+query I
+SELECT (SELECT 1.0 * SUM(value IS NOT NULL) / COUNT(*)
+        FROM read_geotiff('test/data/cea.tif', band := 1)) >= 0.90;
+----
+1

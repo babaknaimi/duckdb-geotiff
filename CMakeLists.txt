@@ -1,54 +1,45 @@
 cmake_minimum_required(VERSION 3.16)
 project(geotiff)
 
-# 0) Ensure we are being built from DuckDB (so the macros exist)
+# DuckDB macros must exist (we're being built from duckdb root via EXTENSION_CONFIGS)
 if(NOT COMMAND build_loadable_extension)
-  message(FATAL_ERROR "DuckDB build macros not loaded. Configure DuckDB with DUCKDB_EXTENSION_CONFIGS=<path>/extension_config.cmake")
+  message(FATAL_ERROR "DuckDB build macros not loaded. Configure DuckDB with EXTENSION_CONFIGS/DUCKDB_EXTENSION_CONFIGS.")
 endif()
 
-# 1) Let CI's tidy job configure without GDAL (no hard failure)
-option(GEOTIFF_ENABLE_GDAL "Build geotiff extension (requires GDAL)" ON)
-
-# Try to find GDAL unless the caller turned it off explicitly
-if(GEOTIFF_ENABLE_GDAL)
-  find_package(GDAL CONFIG QUIET)
-endif()
-
-# If GDAL isn't available, skip building the targets (tidy/format still succeed)
-if(NOT GEOTIFF_ENABLE_GDAL OR NOT GDAL_FOUND)
-  message(STATUS "GDAL not found or disabled - skipping geotiff targets (e.g., tidy mode).")
-  return()
-endif()
-
-# 2) Sources & headers
 set(EXT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
-set(TARGET_NAME geotiff)
 set(EXTENSION_SOURCES
   "${EXT_ROOT}/src/geotiff.cpp"
-  # Uncomment if you also want the static-in-CLI flavor:
+  # Uncomment if you also build the static-in-CLI flavor:
   # "${EXT_ROOT}/src/geotiff_extension.cpp"
 )
+
+# Make headers visible to both targets without referencing targets that may be skipped
 include_directories("${EXT_ROOT}/src/include")
 
-# 3) Build targets (loadable always; static only if EXTENSION_STATIC_BUILD=ON)
-build_loadable_extension(${TARGET_NAME} "" ${EXTENSION_SOURCES})
+# Always create the targets (DuckDB will only build what it needs)
+build_loadable_extension(geotiff "" ${EXTENSION_SOURCES})
 if(EXTENSION_STATIC_BUILD)
-  build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
+  build_static_extension(geotiff ${EXTENSION_SOURCES})
 endif()
 
-# 4) Link GDAL
-if(TARGET ${TARGET_NAME}_loadable_extension)
-  target_link_libraries(${TARGET_NAME}_loadable_extension GDAL::GDAL)
-endif()
-if(TARGET ${TARGET_NAME}_extension) # present only with EXTENSION_STATIC_BUILD
-  target_link_libraries(${TARGET_NAME}_extension GDAL::GDAL)
-endif()
+# Try GDAL softly (no REQUIRED): if missing (e.g. tidy job), we just skip linking.
+find_package(GDAL CONFIG QUIET)
+if(GDAL_FOUND)
+  if(TARGET geotiff_loadable_extension)
+    target_link_libraries(geotiff_loadable_extension GDAL::GDAL)
+  endif()
+  if(TARGET geotiff_extension)
+    target_link_libraries(geotiff_extension GDAL::GDAL)
+  endif()
 
-# 5) RPATH so the loadable finds GDAL next to itself (packaging scripts copy the dylibs/so’s)
-if(APPLE AND TARGET ${TARGET_NAME}_loadable_extension)
-  set_target_properties(${TARGET_NAME}_loadable_extension PROPERTIES
-    BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-elseif(UNIX AND TARGET ${TARGET_NAME}_loadable_extension)
-  set_target_properties(${TARGET_NAME}_loadable_extension PROPERTIES
-    BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
+  # RPATH so the loadable looks next to itself for libs
+  if(APPLE AND TARGET geotiff_loadable_extension)
+    set_target_properties(geotiff_loadable_extension PROPERTIES
+      BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+  elseif(UNIX AND TARGET geotiff_loadable_extension)
+    set_target_properties(geotiff_loadable_extension PROPERTIES
+      BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
+  endif()
+else()
+  message(STATUS "GDAL not found - skipping link (tidy/format mode).")
 endif()

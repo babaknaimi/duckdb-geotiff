@@ -35,4 +35,4 @@ jobs:
       ci_tools_version: main
       extension_name: geotiff
       format_checks: 'format;tidy'
-      extra_cmake_flags: '-DGEOTIFF_ENABLE_GDAL=OFF' 
+      

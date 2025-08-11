@@ -3,7 +3,7 @@
 
 # group [geotiff]
 
--- install the extension produced in this build (no internet, no unsigned flag)
+--- install the extension produced in this build (no internet, no unsigned flag)
 statement ok
 INSTALL geotiff FROM local_build_release;
 

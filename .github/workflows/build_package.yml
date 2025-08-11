@@ -1,0 +1,80 @@
+name: Build & Package geotiff (standalone)
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-package:
+    name: ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            triplet: arm64-osx-dynamic
+          - os: ubuntu-22.04
+            triplet: x64-linux-dynamic
+          - os: windows-2022
+            triplet: x64-windows-dynamic
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build patchelf
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Install build tools (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Bootstrap vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+        shell: bash
+
+      - name: Configure (CMake + Ninja)
+        run: |
+          cmake -G Ninja -S ./duckdb -B build/release \
+            -DDUCKDB_EXTENSION_CONFIGS="$PWD/extension_config.cmake" \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="${{ matrix.triplet }}" \
+            -DEXTENSION_STATIC_BUILD=0
+        shell: bash
+
+      - name: Build extension
+        run: ninja -C build/release extension/geotiff/geotiff.duckdb_extension
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          chmod +x scripts/pack_macos.sh
+          scripts/pack_macos.sh
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x scripts/pack_linux.sh
+          scripts/pack_linux.sh
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/pack_windows.ps1
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: geotiff-${{ matrix.os }}-${{ matrix.triplet }}
+          path: dist/**/*

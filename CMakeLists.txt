@@ -1,38 +1,42 @@
-cmake_minimum_required(VERSION 3.5)
-
+cmake_minimum_required(VERSION 3.16)
 project(geotiff)
 
-set(TARGET_NAME geotiff)
-set(EXTENSION_NAME ${TARGET_NAME}_extension)
-set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
-
-set(EXTENSION_SOURCES
-  src/geotiff.cpp
-  src/geotiff_extension.cpp)
-
-include_directories(src/include)
-
-build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
-build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
-
-target_include_directories(${EXTENSION_NAME}          PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/include)
-target_include_directories(${LOADABLE_EXTENSION_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/include)
-
-find_package(GDAL CONFIG REQUIRED)
-target_link_libraries(${EXTENSION_NAME}          GDAL::GDAL)
-target_link_libraries(${LOADABLE_EXTENSION_NAME} GDAL::GDAL)
-
-# Optional: add RPATHs so the loadable extension looks next to itself for libs
-if(APPLE)
-  set_target_properties(${LOADABLE_EXTENSION_NAME} PROPERTIES
-    BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-elseif(UNIX)
-  set_target_properties(${LOADABLE_EXTENSION_NAME} PROPERTIES
-    BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
+# Ensure DuckDB's macros are available (otherwise bail early)
+if(NOT COMMAND build_loadable_extension)
+  message(FATAL_ERROR "DuckDB build macros not loaded. Did you configure via DuckDB with EXTENSION_CONFIGS or DUCKDB_EXTENSION_CONFIGS?")
 endif()
 
-install(
-  TARGETS ${EXTENSION_NAME}
-  EXPORT "${DUCKDB_EXPORT_SET}"
-  LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
-  ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
+set(EXT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+set(EXTENSION_SOURCES
+  "${EXT_ROOT}/src/geotiff.cpp"           # your table function + geotiff_init/version
+  # If you ALSO want the static-in-CLI variant, uncomment the next line:
+  # "${EXT_ROOT}/src/geotiff_extension.cpp"
+)
+
+# Directory-scope include path so headers resolve even before targets exist
+include_directories("${EXT_ROOT}/src/include")
+
+# Create targets FIRST
+# Static only when DuckDB asks for it (keeps export errors away)
+if(EXTENSION_STATIC_BUILD)
+  build_static_extension(geotiff ${EXTENSION_SOURCES})
+endif()
+build_loadable_extension(geotiff "" ${EXTENSION_SOURCES})
+
+# Link GDAL (vcpkg or system)
+find_package(GDAL CONFIG REQUIRED)
+if(TARGET geotiff_loadable_extension)
+  target_link_libraries(geotiff_loadable_extension GDAL::GDAL)
+endif()
+if(TARGET geotiff_extension) # only when static is enabled
+  target_link_libraries(geotiff_extension GDAL::GDAL)
+endif()
+
+# RPATH so the loadable finds GDAL beside itself
+if(APPLE AND TARGET geotiff_loadable_extension)
+  set_target_properties(geotiff_loadable_extension PROPERTIES
+    BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+elseif(UNIX AND TARGET geotiff_loadable_extension)
+  set_target_properties(geotiff_loadable_extension PROPERTIES
+    BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
+endif()

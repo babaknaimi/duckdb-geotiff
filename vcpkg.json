@@ -2,11 +2,6 @@
         "name": "duckdb-geotiff",
         "version-string": "0.1.0",
         "dependencies": [
-          { "name": "gdal", "default-features": false, "features": ["tiff"] }
-        ],
-        "vcpkg-configuration": {
-                "overlay-ports": [
-                        "./extension-ci-tools/vcpkg_ports"
-                ]
-        }
+          { "name": "gdal", "default-features": false}
+        ]
 }

@@ -1,10 +1,6 @@
-# This file is included by DuckDB's build system. It specifies which extension to load
-
-# Extension from this repo
+# extension_config.cmake — read by DuckDB's top-level build
 duckdb_extension_load(geotiff
-    SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
-    LOAD_TESTS
+  SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
+  DONT_LINK          # only build the loadable .duckdb_extension
+  LOAD_TESTS         # optional
 )
-
-# Any extra extensions that should be built
-# e.g.: duckdb_extension_load(json)

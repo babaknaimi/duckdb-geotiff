@@ -49,76 +49,101 @@ static idx_t RoundUp(idx_t v, idx_t mul) {
   return r ? (v + (mul - r)) : v;
 }
 
-static unique_ptr<FunctionData> Bind(ClientContext &, TableFunctionBindInput &input,
-                                     vector<LogicalType> &types, vector<string> &names) {
-  if (input.inputs.empty()) throw BinderException("read_geotiff(path, ...) requires a file path");
-  auto bd = make_uniq<BindData>();
-  bd->path = StringValue::Get(input.inputs[0]);
-  if (auto it = input.named_parameters.find("band");      it != input.named_parameters.end()) bd->band = it->second.GetValue<int32_t>();
-  if (auto it = input.named_parameters.find("target_mb"); it != input.named_parameters.end()) bd->target_mb = (idx_t)it->second.GetValue<int32_t>();
-  if (auto it = input.named_parameters.find("cache_mb");  it != input.named_parameters.end()) bd->cache_mb  = (idx_t)it->second.GetValue<int32_t>();
-  if (bd->band < 1) throw BinderException("band must be >= 1");
-  types = {LogicalType::BIGINT, LogicalType::DOUBLE};
-  names = {"cell_id", "value"};
-  return std::move(bd);
-}
-
-static unique_ptr<GlobalTableFunctionState> Init(ClientContext &, TableFunctionInitInput &in) {
-  auto &bd = in.bind_data->Cast<BindData>();
-  auto st = make_uniq<GlobalState>();
-  
-  if (bd.cache_mb > 0) {
-    CPLSetConfigOption("GDAL_CACHEMAX", std::to_string(bd.cache_mb).c_str());
+static unique_ptr<FunctionData>
+  Bind(ClientContext &, TableFunctionBindInput &input,
+       vector<LogicalType> &types, vector<string> &names) {
+    if (input.inputs.empty()) throw BinderException("read_geotiff(path, ...) requires a file path");
+    auto bd = make_uniq<BindData>();
+    bd->path = StringValue::Get(input.inputs[0]);
+    
+    // C++11: split the “if with initializer” into two lines
+    auto it = input.named_parameters.find("band");
+    if (it != input.named_parameters.end()) {
+      bd->band = it->second.GetValue<int32_t>();
+    }
+    it = input.named_parameters.find("target_mb");
+    if (it != input.named_parameters.end()) {
+      bd->target_mb = (idx_t)it->second.GetValue<int32_t>();
+    }
+    it = input.named_parameters.find("cache_mb");
+    if (it != input.named_parameters.end()) {
+      bd->cache_mb = (idx_t)it->second.GetValue<int32_t>();
+    }
+    
+    if (bd->band < 1) throw BinderException("band must be >= 1");
+    
+    types = {LogicalType::BIGINT, LogicalType::DOUBLE};
+    names = {"cell_id", "value"};
+    return std::move(bd);
   }
-  
-  GDALAllRegister();
-  auto *raw = static_cast<GDALDataset *>(GDALOpen(bd.path.c_str(), GA_ReadOnly));
-  if (!raw) throw IOException("GDALOpen failed for '%s'", bd.path.c_str());
-  st->ds.reset(raw);
-  
-  if (bd.band > raw->GetRasterCount())
-    throw IOException("Requested band %d but file has only %d", bd->band, raw->GetRasterCount());
-  
-  st->rb = st->ds->GetRasterBand(bd.band);
-  st->width  = raw->GetRasterXSize();
-  st->height = raw->GetRasterYSize();
-  
-  int has_nd = 0;
-  st->nodata = st->rb->GetNoDataValue(&has_nd);
-  st->has_nodata = has_nd != 0;
-  
-  st->rb->GetBlockSize(&st->bx, &st->by);
-  if (st->bx <= 0) st->bx = (int)st->width;
-  
-  const idx_t bytes      = (idx_t)bd.target_mb * 1024ull * 1024ull;
-  const idx_t px_budget  = MaxValue<idx_t>((idx_t)1, bytes / sizeof(double));
-  idx_t rows             = MaxValue<idx_t>(st->by ? (idx_t)st->by : 1, px_budget / (idx_t)st->width);
-  rows                   = RoundUp(rows, (idx_t)MaxValue(1, st->by));
-  rows                   = MinValue<idx_t>(rows, (idx_t)st->height);
-  
-  st->buf_rows = rows;
-  st->buf.assign((size_t)((idx_t)st->width * st->buf_rows), 0.0);
-  st->buf_pos_px = 0;
-  st->buf_len_px = 0;
-  st->next_row   = 0;
-  st->buf_row0   = 0;
-  return std::move(st);
-}
 
+// ---- Init: open dataset, set cache, size buffer
+static unique_ptr<GlobalTableFunctionState>
+  Init(ClientContext &, TableFunctionInitInput &in) {
+    auto &bd = in.bind_data->Cast<BindData>();   // <-- bd is a reference
+    
+    auto st = make_uniq<GlobalState>();
+    if (bd.cache_mb > 0) {
+      CPLSetConfigOption("GDAL_CACHEMAX", std::to_string(bd.cache_mb).c_str());
+    }
+    
+    GDALAllRegister();
+    GDALDataset *raw = static_cast<GDALDataset*>(GDALOpen(bd.path.c_str(), GA_ReadOnly));
+    if (!raw) throw IOException("GDALOpen failed for '%s'", bd.path.c_str());
+    st->ds.reset(raw);
+    
+    if (bd.band > raw->GetRasterCount()) {       // <-- use '.' not '->'
+      throw IOException("Requested band %d but file has only %d",
+                        bd.band, raw->GetRasterCount());
+    }
+    
+    st->rb = st->ds->GetRasterBand(bd.band);
+    st->width  = raw->GetRasterXSize();
+    st->height = raw->GetRasterYSize();
+    
+    int has_nd = 0;
+    st->nodata = st->rb->GetNoDataValue(&has_nd);
+    st->has_nodata = has_nd != 0;
+    
+    st->rb->GetBlockSize(&st->bx, &st->by);
+    if (st->bx <= 0) st->bx = (int)st->width;
+    
+    const idx_t bytes     = (idx_t)bd.target_mb * 1024ull * 1024ull;
+    const idx_t px_budget = MaxValue<idx_t>((idx_t)1, bytes / sizeof(double));
+    idx_t rows            = MaxValue<idx_t>(st->by ? (idx_t)st->by : 1, px_budget / (idx_t)st->width);
+    rows                  = RoundUp(rows, (idx_t)MaxValue(1, st->by));
+    rows                  = MinValue<idx_t>(rows, (idx_t)st->height);
+    
+    st->buf_rows = rows;
+    st->buf.assign((size_t)((idx_t)st->width * st->buf_rows), 0.0);
+    st->buf_pos_px = 0;
+    st->buf_len_px = 0;
+    st->next_row   = 0;
+    st->buf_row0   = 0;
+    return std::move(st);
+  }
+
+// ---- refill buffer (fix st.width usage & safer error message)
 static void Refill(GlobalState &st) {
   if (st.next_row >= st.height) { st.buf_len_px = 0; return; }
-  const int64_t rows_to_read = (int64_t)MinValue<idx_t>(st.buf_rows, (idx_t)(st.height - st.next_row));
-  const auto err = st.rb->RasterIO(GF_Read,
-                                   0, (int)st.next_row,
-                                   (int)st.width, (int)rows_to_read,
-                                   st.buf.data(),
-                                   (int)st.width, (int)rows_to_read,
-                                   GDT_Float64, 0, 0, nullptr);
-  if (err != CE_None) throw IOException("RasterIO failed at row %" PRId64, st.next_row);
+  const int64_t rows_to_read =
+    (int64_t)MinValue<idx_t>(st.buf_rows, (idx_t)(st.height - st.next_row));
+  
+  CPLErr err = st.rb->RasterIO(GF_Read,
+                               0, (int)st.next_row,
+                               (int)st.width, (int)rows_to_read,
+                               st.buf.data(),
+                               (int)st.width, (int)rows_to_read,
+                               GDT_Float64, 0, 0, nullptr);
+  if (err != CE_None) {
+    // avoid PRId64 portability hiccups under C++11 toolchain
+    throw IOException("RasterIO failed at row %lld", (long long)st.next_row);
+  }
+  
   st.buf_row0  = st.next_row;
   st.next_row += rows_to_read;
   st.buf_pos_px = 0;
-  st.buf_len_px = (idx_t)((int64_t)st->width * rows_to_read);
+  st.buf_len_px = (idx_t)((int64_t)st.width * rows_to_read);  // <-- use '.' not '->'
 }
 
 static void Scan(ClientContext &, TableFunctionInput &in, DataChunk &out) {

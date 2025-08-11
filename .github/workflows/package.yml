@@ -1,0 +1,71 @@
+name: Package geotiff (bundle GDAL)
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build geotiff extension (all OS)"]
+    types: [completed]
+
+jobs:
+  package-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Find Linux artifact & bundle
+        run: |
+          set -euo pipefail
+          EXT=$(find artifacts -type f -name 'geotiff.duckdb_extension' -path '*linux*' | head -n1)
+          OUT=dist/linux
+          mkdir -p "$OUT"
+          cp "$EXT" "$OUT/"
+          # copy GDAL .so that the build produced (path may vary, so grab any libgdal* nearby)
+          find "$(dirname "$EXT")" -name 'libgdal*.so*' -exec cp -P {} "$OUT/" \; || true
+          # ensure the extension looks for libs next to itself
+          sudo apt-get update && sudo apt-get install -y patchelf
+          patchelf --set-rpath '$ORIGIN' "$OUT/geotiff.duckdb_extension"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: geotiff-linux-packaged
+          path: dist/linux
+
+  package-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Find macOS artifact & bundle
+        run: |
+          set -euo pipefail
+          EXT=$(find artifacts -type f -name 'geotiff.duckdb_extension' -path '*osx*' | head -n1)
+          OUT=dist/macos
+          mkdir -p "$OUT"
+          cp "$EXT" "$OUT/"
+          # copy GDAL dylibs if present in artifact tree
+          find "$(dirname "$EXT")" -name 'libgdal*.dylib' -exec cp {} "$OUT/" \; || true
+          # add runpath so dyld looks next to the extension
+          install_name_tool -add_rpath "@loader_path" "$OUT/geotiff.duckdb_extension"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: geotiff-macos-packaged
+          path: dist/macos
+
+  package-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Find Windows artifact & bundle
+        shell: pwsh
+        run: |
+          $ext = Get-ChildItem -Recurse -Path artifacts -Filter geotiff.duckdb_extension | Where-Object { $_.FullName -match 'windows' } | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
+          Copy-Item $ext.FullName dist\windows\
+          # copy GDAL DLLs alongside the extension if present
+          Get-ChildItem -Recurse -Path $ext.DirectoryName -Include "gdal*.dll","proj*.dll","tiff*.dll","jpeg*.dll","zlib*.dll","lzma*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination dist\windows\ -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: geotiff-windows-packaged
+          path: dist/windows

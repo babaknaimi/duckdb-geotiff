@@ -26,7 +26,7 @@ jobs:
       duckdb_version: v1.3.2
       ci_tools_version: v1.3.2
       extension_name: geotiff
-      architectures: 'linux_amd64,linux_arm64,linux_amd64_musl,osx_amd64,osx_arm64,windows_amd64,wasm_mvp,wasm_eh,wasm_threads'
+      exclude_archs: 'windows_amd64_mingw'
 
   code-quality-check:
     name: Code Quality Check

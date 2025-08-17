@@ -1,23 +1,118 @@
-# Extension updating 
-When cloning this template, the target version of DuckDB should be the latest stable release of DuckDB. However, there 
-will inevitably come a time when a new DuckDB is released and the extension repository needs updating. This process goes
-as follows:
+# geotiff (DuckDB Community Extension)
 
-- Bump submodules
-  - `./duckdb` should be set to latest tagged release
-  - `./extension-ci-tools` should be set to updated branch corresponding to latest DuckDB release. So if you're building for DuckDB `v1.1.0` there will be a branch in `extension-ci-tools` named `v1.1.0` to which you should check out. 
-- Bump versions in `./github/workflows`
-  - `duckdb_version` input in `duckdb-stable-build` job in `MainDistributionPipeline.yml` should be set to latest tagged release
-  - `duckdb_version` input in `duckdb-stable-deploy` job in `MainDistributionPipeline.yml` should be set to latest tagged release
-  - the reusable workflow `duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml` for the `duckdb-stable-build` job should be set to latest tagged release
+`geotiff` lets DuckDB read GeoTIFF rasters via GDAL and expose them as a table function.
 
-# API changes
-DuckDB extensions built with this extension template are built against the internal C++ API of DuckDB. This API is not guaranteed to be stable.
-What this means for extension development is that when updating your extensions DuckDB target version using the above steps, you may run into the fact that your extension no longer builds properly.
+## Install
 
-Currently, DuckDB does not (yet) provide a specific change log for these API changes, but it is generally not too hard to figure out what has changed.
+```sql
+INSTALL geotiff FROM community;
+LOAD geotiff;
+```
 
-For figuring out how and why the C++ API changed, we recommend using the following resources:
-- DuckDB's [Release Notes](https://github.com/duckdb/duckdb/releases)
-- DuckDB's history of [Core extension patches](https://github.com/duckdb/duckdb/commits/main/.github/patches/extensions)
-- The git history of the relevant C++ Header file of the API that has changed
+
+(If you installed an older copy locally and want to refresh:)
+
+```sql
+FORCE INSTALL geotiff FROM community;
+LOAD geotiff;
+```
+
+# Usage
+
+## Single band (long form)
+
+Returns two columns:
+
+- cell_id BIGINT — 0-based linear index in row-major order (row * width + col)
+
+- value DOUBLE — pixel value (NULL for NoData)
+
+```sql
+SELECT * FROM read_geotiff('cea.tif', band := 1) LIMIT 5;
+```
+
+## Multiple bands (wide form)
+
+Returns one row per cell with one column per requested band:
+
+```sql
+SELECT * FROM read_geotiff('cea.tif', bands := [1,2,3]) LIMIT 5;
+-- schema: (cell_id BIGINT, band1 DOUBLE, band2 DOUBLE, band3 DOUBLE)
+
+```
+
+## Typical patterns
+
+### Create a wide table from a multi-band raster:
+
+```sql
+CREATE TABLE r_chelsa AS
+SELECT * FROM read_geotiff('cea.tif', bands := [1,2,3]);
+CREATE INDEX idx_r_chelsa_cell ON r_chelsa(cell_id);
+
+```
+
+### Add one more band as a new column:
+```sql
+ALTER TABLE r_chelsa ADD COLUMN IF NOT EXISTS band4 DOUBLE;
+UPDATE r_chelsa t
+SET band4 = g.band4
+FROM read_geotiff('cea.tif', bands := [4]) g
+WHERE t.cell_id = g.cell_id;
+
+```
+
+### Filter/aggregate:
+
+```sql
+-- mean of band2 over all cells
+SELECT avg(band2) FROM r_chelsa;
+
+-- spatial subset: pick a range of cell_ids
+SELECT * FROM r_chelsa WHERE cell_id BETWEEN 1e6 AND 1e6 + 999;
+
+```
+## Arguments:
+
+- band INTEGER – read a single band (kept for backward compatibility)
+
+- bands LIST<INTEGER> – read multiple bands and return a wide table
+
+- target_mb INTEGER – approximate in-memory window size (MB) used to batch raster I/O
+and reduce GDAL call overhead. Defaults to 64; increase (e.g. 256–1024) on big machines
+to reduce passes over the file. The extension chooses a block-aligned number of rows.
+
+### Notes:
+
+The function streams; it does not load the full raster in memory.
+
+NoData values are returned as NULL.
+
+
+### R example:
+
+```r
+library(duckdb)
+
+con <- dbConnect(duckdb::duckdb())
+
+dbExecute(con, "INSTALL geotiff FROM community;")
+dbExecute(con, "LOAD geotiff;")
+
+# Single band
+dbGetQuery(con, "SELECT * FROM read_geotiff('cea.tif', band := 1) LIMIT 5;")
+
+# Multiple bands
+dbGetQuery(con, "SELECT * FROM read_geotiff('cea.tif', bands := [1,2,3]) LIMIT 5;")
+
+dbDisconnect(con, shutdown = TRUE)
+
+```
+
+### Performance tips:
+
+Use CTAS for the first materialization, then one UPDATE … FROM per extra layer.
+
+Tune target_mb upward if you have RAM and want fewer GDAL calls.
+
+Create an index on cell_id after your final load for faster random access.

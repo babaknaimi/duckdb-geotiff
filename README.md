@@ -36,7 +36,7 @@ SELECT * FROM read_geotiff('cea.tif', band := 1) LIMIT 5;
 Returns one row per cell with one column per requested band:
 
 ```sql
-SELECT * FROM read_geotiff('cea.tif', bands := [1,2,3]) LIMIT 5;
+SELECT * FROM read_geotiff('cea.tif', band := [1,2,3]) LIMIT 5;
 -- schema: (cell_id BIGINT, band1 DOUBLE, band2 DOUBLE, band3 DOUBLE)
 
 ```
@@ -47,7 +47,7 @@ SELECT * FROM read_geotiff('cea.tif', bands := [1,2,3]) LIMIT 5;
 
 ```sql
 CREATE TABLE r_chelsa AS
-SELECT * FROM read_geotiff('cea.tif', bands := [1,2,3]);
+SELECT * FROM read_geotiff('cea.tif', band := [1,2,3]);
 CREATE INDEX idx_r_chelsa_cell ON r_chelsa(cell_id);
 
 ```
@@ -57,7 +57,7 @@ CREATE INDEX idx_r_chelsa_cell ON r_chelsa(cell_id);
 ALTER TABLE r_chelsa ADD COLUMN IF NOT EXISTS band4 DOUBLE;
 UPDATE r_chelsa t
 SET band4 = g.band4
-FROM read_geotiff('cea.tif', bands := [4]) g
+FROM read_geotiff('cea.tif', band := [4]) g
 WHERE t.cell_id = g.cell_id;
 
 ```
@@ -74,9 +74,7 @@ SELECT * FROM r_chelsa WHERE cell_id BETWEEN 1e6 AND 1e6 + 999;
 ```
 ## Arguments:
 
-- band INTEGER – read a single band (kept for backward compatibility)
-
-- bands LIST<INTEGER> – read multiple bands and return a wide table
+- band LIST<INTEGER> – read a single or multiple band(s) and return a wide table
 
 - target_mb INTEGER – approximate in-memory window size (MB) used to batch raster I/O
 and reduce GDAL call overhead. Defaults to 64; increase (e.g. 256–1024) on big machines
@@ -86,7 +84,7 @@ to reduce passes over the file. The extension chooses a block-aligned number of 
 
 The function streams; it does not load the full raster in memory.
 
-NoData values are returned as NULL.
+NoData values are returned as NA.
 
 
 ### R example:
@@ -103,15 +101,13 @@ dbExecute(con, "LOAD geotiff;")
 dbGetQuery(con, "SELECT * FROM read_geotiff('cea.tif', band := 1) LIMIT 5;")
 
 # Multiple bands
-dbGetQuery(con, "SELECT * FROM read_geotiff('cea.tif', bands := [1,2,3]) LIMIT 5;")
+dbGetQuery(con, "SELECT * FROM read_geotiff('cea.tif', band := [1,2,3]) LIMIT 5;")
 
 dbDisconnect(con, shutdown = TRUE)
 
 ```
 
 ### Performance tips:
-
-Use CTAS for the first materialization, then one UPDATE … FROM per extra layer.
 
 Tune target_mb upward if you have RAM and want fewer GDAL calls.
 

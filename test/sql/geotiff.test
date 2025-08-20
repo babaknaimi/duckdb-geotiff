@@ -11,6 +11,6 @@ LOAD geotiff;
 
 
 query I
-SELECT COUNT(*) FROM read_geotiff('test/data/cea.tif', band := 1, target_mb := 8);
+SELECT COUNT(*) FROM read_geotiff('test/data/cea.tif', band := 1, target_mb := 32);
 ----
 264710
